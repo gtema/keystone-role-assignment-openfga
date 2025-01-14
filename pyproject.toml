@@ -1,0 +1,55 @@
+[project]
+name = "keystone_role_assignment_openfga"
+authors = [
+  {name = "Artem Goncharov"},
+]
+description = "OpenStack Keystone role assignment plugin using OpenFGA"
+readme = {file="README.rst", content-type="text/x-rst"}
+dynamic = ["version"]
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "keystone>=24.0",
+  "requests"
+]
+classifiers = [
+  "Environment :: OpenStack",
+  "Intended Audience :: Information Technology",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  # Codegenerator is currently not intended to be uploaded to pypi
+  "Private :: Do Not Upload",
+]
+
+[build-system]
+requires = ["pbr>=6.0.0", "setuptools>=64.0.0"]
+build-backend = "pbr.build"
+
+[entry_points."keystone.assignment"]
+openfga = "keystone_role_assignment_openfga.plugin:OpenFGA"
+
+[tool.ruff]
+line-length = 79
+target-version = "py38"
+
+[tool.ruff.lint]
+# enable the following rule classes:
+#
+# C4: https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
+# UP: https://docs.astral.sh/ruff/rules/#pyupgrade-up
+select = ["C4", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+skip-magic-trailing-comma = true
+
+[tool.uv]
