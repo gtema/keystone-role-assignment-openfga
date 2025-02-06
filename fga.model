@@ -1,0 +1,38 @@
+model
+  schema 1.1
+
+type domain
+
+type user
+  relations
+    define owner: [domain]
+
+type group
+  relations
+    define member: [user, group#member]
+    define owner: [domain]
+
+type project
+  relations
+    define admin: [user, group#member]
+    define manager: [user, group#member] or admin
+    define member: [user, group#member] or admin or manager
+    define owner: [domain]
+    define reader: [user, group#member] or member or admin
+    define service: [system]
+
+type system
+  relations
+    define admin: [user, group#member]
+    define member: [user, group#member] or admin
+    define reader: [user, group#member] or member or admin
+    define system: [user, group#member]
+
+type role
+  relations
+    define assignee: [roleassignment#assignee]
+
+type roleassignment
+  relations
+    define assignee: [user, group#member]
+
