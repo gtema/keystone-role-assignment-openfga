@@ -12,13 +12,13 @@
 
 import typing as ty
 
-import keystone.conf
 import oslo_config
-import requests
+from oslo_log import log
+import keystone.conf
 from keystone import exception
 from keystone.assignment.backends import base
 from keystone.common import provider_api
-from oslo_log import log
+import requests
 
 from keystone_role_assignment_openfga import config
 
@@ -27,19 +27,19 @@ LOG = log.getLogger(__name__)
 PROVIDERS = provider_api.ProviderAPIs
 
 
-def convert_openfga_to_assignment_base(actor: str, target: str):
+def convert_openfga_tuple_to_assignment_base(actor: str, target: str):
     """Convert actor and target to the assignment dict."""
     assignment: dict[str, str] = {}
     if actor.startswith("user"):
         assignment["user_id"] = actor[5:]
     elif actor.startswith("group"):
-        assignment["group_id"] = actor[5:]
+        assignment["group_id"] = actor[6:]
     if target.startswith("project"):
         assignment["project_id"] = target[8:]
-    elif target.startswith("group"):
-        assignment["group_id"] = target[6:]
+    elif target.startswith("domain"):
+        assignment["domain_id"] = target[7:]
     elif target.startswith("system"):
-        assignment["system_id"] = target[6:]
+        assignment["system_id"] = target[7:]
     return assignment
 
 
@@ -47,7 +47,7 @@ def convert_openfga_tuple_to_assignment(
     fga_tuple, roles_by_name
 ) -> ty.Optional[dict[str, str]]:
     """Convert OpenFGA tuple data to the role assignment dict"""
-    assignment: dict = convert_openfga_to_assignment_base(
+    assignment: dict = convert_openfga_tuple_to_assignment_base(
         fga_tuple["user"], fga_tuple["object"]
     )
     fga_relation = fga_tuple["relation"]
@@ -112,14 +112,18 @@ class OpenFGA(base.AssignmentDriverBase):
                     response.text,
                 )
                 return []
-            data = response.json().get("tuples", None)
-            LOG.debug(f"OpenFGA response: {data}")
-            for fga_tuple in data:
-                assignment = convert_openfga_tuple_to_assignment(
-                    fga_tuple.get("key"), self._get_roles_by_name()
-                )
-                if assignment:
-                    assignments.append(assignment)
+            try:
+                tuples = response.json().get("tuples", None)
+                LOG.debug(f"OpenFGA response: {tuples}")
+                if isinstance(tuples, list):
+                    for fga_tuple in tuples:
+                        assignment = convert_openfga_tuple_to_assignment(
+                            fga_tuple.get("key"), self._get_roles_by_name()
+                        )
+                        if assignment:
+                            assignments.append(assignment)
+            except requests.exceptions.JSONDecodeError as ex:
+                LOG.exception("failed to process OpenFGA response: %s", ex)
 
         except (
             requests.exceptions.ConnectionError,
@@ -204,8 +208,10 @@ class OpenFGA(base.AssignmentDriverBase):
                 role_result = check_results.get(role_id, None)
                 if role_result:
                     if role_result.get("allowed", False):
-                        assignment: dict = convert_openfga_to_assignment_base(
-                            actor, target
+                        assignment: dict = (
+                            convert_openfga_tuple_to_assignment_base(
+                                actor, target
+                            )
                         )
                         assignment["role_id"] = role_id
                         assignments.append(assignment)

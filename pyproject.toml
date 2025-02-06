@@ -10,6 +10,8 @@ requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 dependencies = [
   "keystone>=24.0",
+  "oslo.config",
+  "oslo.log",
   "requests"
 ]
 classifiers = [
@@ -25,20 +27,26 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  # Codegenerator is currently not intended to be uploaded to pypi
-  "Private :: Do Not Upload",
 ]
 
 [build-system]
 requires = ["pbr>=6.0.0", "setuptools>=64.0.0"]
 build-backend = "pbr.build"
 
-[entry_points."keystone.assignment"]
+[project.optional-dependencies]
+test = ["pytest", "requests-mock"]
+
+[project.entry-points."keystone.assignment"]
 openfga = "keystone_role_assignment_openfga.plugin:OpenFGA"
+
+[tool.setuptools]
+packages = [
+  "keystone_role_assignment_openfga"
+]
 
 [tool.ruff]
 line-length = 79
-target-version = "py38"
+target-version = "py39"
 
 [tool.ruff.lint]
 # enable the following rule classes:
@@ -53,3 +61,8 @@ docstring-code-format = true
 skip-magic-trailing-comma = true
 
 [tool.uv]
+
+[tool.pytest]
+log_level = "debug"
+log_cli = true
+log_cli_level = "debug"
