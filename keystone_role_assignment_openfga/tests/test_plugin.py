@@ -105,6 +105,12 @@ def test_convert_assignment_to_openfga_tuple():
     assert plugin.convert_assignment_to_openfga_tuple(
         "reader", group_id="foo", domain_id="bar"
     ) == {"user": "group:foo", "object": "domain:bar", "relation": "reader"}
+    assert plugin.convert_assignment_to_openfga_tuple(
+        "reader", user_id="foo", system_id="bar"
+    ) == {"user": "user:foo", "object": "system:bar", "relation": "reader"}
+    assert plugin.convert_assignment_to_openfga_tuple(
+        "reader", group_id="foo", system_id="bar"
+    ) == {"user": "group:foo", "object": "system:bar", "relation": "reader"}
 
     with pytest.raises(RuntimeError):
         assert plugin.convert_assignment_to_openfga_tuple(
@@ -249,3 +255,55 @@ def test_add_role_to_user_and_project_409(monkeypatch, requests_mock, config):
     )
     with pytest.raises(exception.Conflict):
         driver.add_role_to_user_and_project("foo", "bar", "reader_role_id")
+
+
+def test_create_system_grant(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_user_system_request(request):
+        return {
+            "writes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "user:foo",
+                        "object": "system:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    def match_group_system_request(request):
+        return {
+            "writes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "group:foo",
+                        "object": "system:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_user_system_request,
+    )
+    driver.create_system_grant(
+        "reader_role_id", "foo", "bar", "UserSystem", False
+    )
+    driver.create_system_grant(
+        "reader_role_id", "foo", "bar", "UserSystem", True
+    )
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_group_system_request,
+    )
+    driver.create_system_grant(
+        "reader_role_id", "foo", "bar", "GroupSystem", False
+    )
+    driver.create_system_grant(
+        "reader_role_id", "foo", "bar", "GroupSystem", True
+    )
