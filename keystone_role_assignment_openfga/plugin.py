@@ -64,6 +64,7 @@ def convert_assignment_to_openfga_tuple(
     group_id: ty.Optional[str] = None,
     project_id: ty.Optional[str] = None,
     domain_id: ty.Optional[str] = None,
+    system_id: ty.Optional[str] = None,
 ) -> dict[str, str]:
     """Convert assignment to OpenFGA tuple"""
     fga_tuple: dict[str, str] = {"relation": role_name}
@@ -79,6 +80,8 @@ def convert_assignment_to_openfga_tuple(
         fga_tuple["object"] = f"project:{project_id}"
     elif domain_id:
         fga_tuple["object"] = f"domain:{domain_id}"
+    elif system_id:
+        fga_tuple["object"] = f"system:{system_id}"
     else:
         raise RuntimeError(
             "Cannot construct OpenFGA tuple without project_id or domain_id"
@@ -518,12 +521,22 @@ class OpenFGA(base.AssignmentDriverBase):
         :param actor_id: the unique ID of the user or group
         :param target_id: the unique ID or string representing the target
         :param assignment_type: a string describing the relationship of the
-                                assignment
+            assignment
         :param inherited: a boolean denoting if the assignment is inherited or
-                          not
-
+            not
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        role_name = self._get_roles_by_id()[role_id]
+        user_id: ty.Optional[str] = None
+        group_id: ty.Optional[str] = None
+        if assignment_type == "UserSystem":
+            user_id = actor_id
+        elif assignment_type == "GroupSystem":
+            group_id = actor_id
+
+        fga_tuple = convert_assignment_to_openfga_tuple(
+            role_name, user_id=user_id, group_id=group_id, system_id=target_id
+        )
+        self.openfga_write_tuple([fga_tuple])
 
     def list_system_grants(self, actor_id, target_id, assignment_type):
         """Return a list of all system assignments for a specific entity.
