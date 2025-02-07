@@ -16,6 +16,7 @@ import pytest
 from keystone_role_assignment_openfga import plugin
 from keystone_role_assignment_openfga import config as plugin_config
 from keystone.common import provider_api
+from keystone import exception
 
 from requests import HTTPError
 import requests_mock
@@ -89,6 +90,30 @@ def test_convert_openfga_tuple_to_assignment_gs():
         {"user": "group:foo", "object": "project:bar", "relation": "reader"},
         ROLES_BY_NAME,
     ) == {"group_id": "foo", "project_id": "bar", "role_id": "reader_role_id"}
+
+
+def test_convert_assignment_to_openfga_tuple():
+    assert plugin.convert_assignment_to_openfga_tuple(
+        "reader", user_id="foo", project_id="bar"
+    ) == {"user": "user:foo", "object": "project:bar", "relation": "reader"}
+    assert plugin.convert_assignment_to_openfga_tuple(
+        "reader", group_id="foo", project_id="bar"
+    ) == {"user": "group:foo", "object": "project:bar", "relation": "reader"}
+    assert plugin.convert_assignment_to_openfga_tuple(
+        "reader", user_id="foo", domain_id="bar"
+    ) == {"user": "user:foo", "object": "domain:bar", "relation": "reader"}
+    assert plugin.convert_assignment_to_openfga_tuple(
+        "reader", group_id="foo", domain_id="bar"
+    ) == {"user": "group:foo", "object": "domain:bar", "relation": "reader"}
+
+    with pytest.raises(RuntimeError):
+        assert plugin.convert_assignment_to_openfga_tuple(
+            "reader", user_id="foo", group_id="bar"
+        )
+        assert plugin.convert_assignment_to_openfga_tuple(
+            "reader", project_id="foo", domain_id="bar"
+        )
+        assert plugin.convert_assignment_to_openfga_tuple("reader")
 
 
 def test_plugin_init(requests_mock, config):
@@ -191,3 +216,36 @@ def test_list_role_assignments_bad_response(
     )
     res = driver.list_role_assignments()
     assert res == []
+
+
+def test_add_role_to_user_and_project(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_request(request):
+        return {
+            "writes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "user:foo",
+                        "object": "project:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_request,
+    )
+    driver.add_role_to_user_and_project("foo", "bar", "reader_role_id")
+
+
+def test_add_role_to_user_and_project_409(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write", status_code=409
+    )
+    with pytest.raises(exception.Conflict):
+        driver.add_role_to_user_and_project("foo", "bar", "reader_role_id")

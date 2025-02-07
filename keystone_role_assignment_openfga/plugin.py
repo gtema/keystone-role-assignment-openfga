@@ -58,6 +58,34 @@ def convert_openfga_tuple_to_assignment(
     return assignment
 
 
+def convert_assignment_to_openfga_tuple(
+    role_name: str,
+    user_id: ty.Optional[str] = None,
+    group_id: ty.Optional[str] = None,
+    project_id: ty.Optional[str] = None,
+    domain_id: ty.Optional[str] = None,
+) -> dict[str, str]:
+    """Convert assignment to OpenFGA tuple"""
+    fga_tuple: dict[str, str] = {"relation": role_name}
+    if user_id:
+        fga_tuple["user"] = f"user:{user_id}"
+    elif group_id:
+        fga_tuple["user"] = f"group:{group_id}"
+    else:
+        raise RuntimeError(
+            "Cannot construct OpenFGA tuple without user_id or group_id"
+        )
+    if project_id:
+        fga_tuple["object"] = f"project:{project_id}"
+    elif domain_id:
+        fga_tuple["object"] = f"domain:{domain_id}"
+    else:
+        raise RuntimeError(
+            "Cannot construct OpenFGA tuple without project_id or domain_id"
+        )
+    return fga_tuple
+
+
 class OpenFGA(base.AssignmentDriverBase):
     conf: oslo_config.cfg.ConfigOpts
     _openfga: requests.Session
@@ -135,6 +163,34 @@ class OpenFGA(base.AssignmentDriverBase):
             raise
 
         return assignments
+
+    def openfga_write_tuple(self, tuples: list[dict[str, str]]):
+        """Perform `write tuples` OpenFGA request"""
+        try:
+            LOG.debug(f"Writing OpenFGA tuples {tuples}")
+            request: dict[str, ty.Any] = {"writes": {"tuple_keys": tuples}}
+            response = self.fga_session.post(
+                f"{self.conf.fga.api_url}/stores/{self.conf.fga.store_id}/write",
+                json=request,
+            )
+            if response.status_code == 409:
+                raise keystone.exception.Conflict
+            if response.status_code != 200:
+                LOG.warning(
+                    "failed to check authorization (invalid http code: %s, body: %s",
+                    response.status_code,
+                    response.text,
+                )
+                raise RuntimeError("Cannot persist relation in OpenFGA")
+
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ReadTimeout,
+        ) as ex:
+            LOG.warning(
+                "failed to read authorization tuples in OpenFGA: %s", ex
+            )
+            raise
 
     def openfga_check(self, query: dict) -> bool:
         """Perform `check` OpenFGA request"""
@@ -232,7 +288,15 @@ class OpenFGA(base.AssignmentDriverBase):
             exists.
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        role_name = self._get_roles_by_id()[role_id]
+        fga_tuple = convert_assignment_to_openfga_tuple(
+            role_name,
+            user_id,
+            group_id=None,
+            project_id=project_id,
+            domain_id=None,
+        )
+        self.openfga_write_tuple([fga_tuple])
 
     def remove_role_from_user_and_project(self, user_id, project_id, role_id):
         """Remove a role from a user within given project.
