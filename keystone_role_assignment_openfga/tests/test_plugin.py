@@ -257,6 +257,113 @@ def test_add_role_to_user_and_project_409(monkeypatch, requests_mock, config):
         driver.add_role_to_user_and_project("foo", "bar", "reader_role_id")
 
 
+def test_remove_role_from_user_and_project(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_request(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "user:foo",
+                        "object": "project:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_request,
+    )
+    driver.remove_role_from_user_and_project("foo", "bar", "reader_role_id")
+
+
+def test_create_grant(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_user_request(request):
+        return {
+            "writes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "user:foo",
+                        "object": "project:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    def match_group_request(request):
+        return {
+            "writes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "group:foo",
+                        "object": "project:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_user_request,
+    )
+    driver.create_grant("reader_role_id", user_id="foo", project_id="bar")
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_group_request,
+    )
+    driver.create_grant("reader_role_id", group_id="foo", project_id="bar")
+
+
+def test_delete_grant(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_user_request(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "user:foo",
+                        "object": "project:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    def match_group_request(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "relation": "reader",
+                        "user": "group:foo",
+                        "object": "project:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_user_request,
+    )
+    driver.delete_grant("reader_role_id", user_id="foo", project_id="bar")
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_group_request,
+    )
+    driver.delete_grant("reader_role_id", group_id="foo", project_id="bar")
+
+
 def test_create_system_grant(monkeypatch, requests_mock, config):
     driver = plugin.OpenFGA()
 

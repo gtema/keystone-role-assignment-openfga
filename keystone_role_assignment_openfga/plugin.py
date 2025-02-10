@@ -167,11 +167,17 @@ class OpenFGA(base.AssignmentDriverBase):
 
         return assignments
 
-    def openfga_write_tuple(self, tuples: list[dict[str, str]]):
+    def openfga_write(self, mode: str, tuples: list[dict[str, str]]):
         """Perform `write tuples` OpenFGA request"""
+        if mode == "add":
+            mode_key = "writes"
+        elif mode == "delete":
+            mode_key = "deletes"
+        else:
+            raise RuntimeError(f"Mode {mode} is not supported")
         try:
             LOG.debug(f"Writing OpenFGA tuples {tuples}")
-            request: dict[str, ty.Any] = {"writes": {"tuple_keys": tuples}}
+            request: dict[str, ty.Any] = {mode_key: {"tuple_keys": tuples}}
             response = self.fga_session.post(
                 f"{self.conf.fga.api_url}/stores/{self.conf.fga.store_id}/write",
                 json=request,
@@ -194,6 +200,14 @@ class OpenFGA(base.AssignmentDriverBase):
                 "failed to read authorization tuples in OpenFGA: %s", ex
             )
             raise
+
+    def openfga_add_tuple(self, tuples: list[dict[str, str]]):
+        """Perform `write tuples` OpenFGA request"""
+        self.openfga_write("add", tuples)
+
+    def openfga_remove_tuple(self, tuples: list[dict[str, str]]):
+        """Perform `delete tuples` OpenFGA request"""
+        self.openfga_write("delete", tuples)
 
     def openfga_check(self, query: dict) -> bool:
         """Perform `check` OpenFGA request"""
@@ -299,7 +313,7 @@ class OpenFGA(base.AssignmentDriverBase):
             project_id=project_id,
             domain_id=None,
         )
-        self.openfga_write_tuple([fga_tuple])
+        self.openfga_add_tuple([fga_tuple])
 
     def remove_role_from_user_and_project(self, user_id, project_id, role_id):
         """Remove a role from a user within given project.
@@ -307,7 +321,15 @@ class OpenFGA(base.AssignmentDriverBase):
         :raises keystone.exception.RoleNotFound: If the role doesn't exist.
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        role_name = self._get_roles_by_id()[role_id]
+        fga_tuple = convert_assignment_to_openfga_tuple(
+            role_name,
+            user_id,
+            group_id=None,
+            project_id=project_id,
+            domain_id=None,
+        )
+        self.openfga_remove_tuple([fga_tuple])
 
     # assignment/grant crud
 
@@ -327,7 +349,15 @@ class OpenFGA(base.AssignmentDriverBase):
         the OS-INHERIT extension to be enabled).
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        role_name = self._get_roles_by_id()[role_id]
+        fga_tuple = convert_assignment_to_openfga_tuple(
+            role_name,
+            user_id=user_id,
+            group_id=group_id,
+            project_id=project_id,
+            domain_id=domain_id,
+        )
+        self.openfga_add_tuple([fga_tuple])
 
     def list_grant_role_ids(
         self,
@@ -409,7 +439,15 @@ class OpenFGA(base.AssignmentDriverBase):
             assignment doesn't exist.
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        role_name = self._get_roles_by_id()[role_id]
+        fga_tuple = convert_assignment_to_openfga_tuple(
+            role_name,
+            user_id=user_id,
+            group_id=group_id,
+            project_id=project_id,
+            domain_id=domain_id,
+        )
+        self.openfga_remove_tuple([fga_tuple])
 
     def list_role_assignments(
         self,
@@ -536,7 +574,7 @@ class OpenFGA(base.AssignmentDriverBase):
         fga_tuple = convert_assignment_to_openfga_tuple(
             role_name, user_id=user_id, group_id=group_id, system_id=target_id
         )
-        self.openfga_write_tuple([fga_tuple])
+        self.openfga_add_tuple([fga_tuple])
 
     def list_system_grants(self, actor_id, target_id, assignment_type):
         """Return a list of all system assignments for a specific entity.
