@@ -364,6 +364,346 @@ def test_delete_grant(monkeypatch, requests_mock, config):
     driver.delete_grant("reader_role_id", group_id="foo", project_id="bar")
 
 
+def test_delete_project_assignments(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_query(request):
+        return {"tuple_key": {"object": "project:foo"}} == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query,
+        json={
+            "tuples": [
+                {
+                    "key": {
+                        "user": "user:bob",
+                        "relation": "reader",
+                        "object": "project:foo",
+                    }
+                },
+                {
+                    "key": {
+                        "user": "user:tom",
+                        "relation": "manager",
+                        "object": "project:foo",
+                    }
+                },
+                {
+                    "key": {
+                        "user": "user:alice",
+                        "relation": "supervisor",
+                        "object": "project:foo",
+                    }
+                },
+            ]
+        },
+    )
+
+    def match_change(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "user": "user:bob",
+                        "relation": "reader",
+                        "object": "project:foo",
+                    },
+                    {
+                        "user": "user:tom",
+                        "relation": "manager",
+                        "object": "project:foo",
+                    },
+                    {
+                        "user": "user:alice",
+                        "relation": "supervisor",
+                        "object": "project:foo",
+                    },
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_change,
+    )
+    driver.delete_project_assignments("foo")
+
+
+def test_delete_domain_assignments(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_query(request):
+        return {"tuple_key": {"object": "domain:foo"}} == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query,
+        json={
+            "tuples": [
+                {
+                    "key": {
+                        "user": "user:bob",
+                        "relation": "reader",
+                        "object": "domain:foo",
+                    }
+                },
+                {
+                    "key": {
+                        "user": "user:tom",
+                        "relation": "manager",
+                        "object": "domain:foo",
+                    }
+                },
+                {
+                    "key": {
+                        "user": "user:alice",
+                        "relation": "supervisor",
+                        "object": "domain:foo",
+                    }
+                },
+            ]
+        },
+    )
+
+    def match_change(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "user": "user:bob",
+                        "relation": "reader",
+                        "object": "domain:foo",
+                    },
+                    {
+                        "user": "user:tom",
+                        "relation": "manager",
+                        "object": "domain:foo",
+                    },
+                    {
+                        "user": "user:alice",
+                        "relation": "supervisor",
+                        "object": "domain:foo",
+                    },
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_change,
+    )
+    driver.delete_domain_assignments("foo")
+
+
+def test_delete_user_assignments(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_query_project(request):
+        return {
+            "tuple_key": {"user": "user:foo", "object": "project:"}
+        } == request.json()
+
+    def match_query_domain(request):
+        return {
+            "tuple_key": {"user": "user:foo", "object": "domain:"}
+        } == request.json()
+
+    def match_query_system(request):
+        return {
+            "tuple_key": {"user": "user:foo", "object": "system:"}
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query_project,
+        json={
+            "tuples": [
+                {
+                    "key": {
+                        "user": "user:foo",
+                        "relation": "reader",
+                        "object": "project:bar",
+                    }
+                },
+                {
+                    "key": {
+                        "user": "user:foo",
+                        "relation": "manager",
+                        "object": "project:baz",
+                    }
+                },
+            ]
+        },
+    )
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query_domain,
+        json={
+            "tuples": [
+                {
+                    "key": {
+                        "user": "user:foo",
+                        "relation": "reader",
+                        "object": "domain:bar",
+                    }
+                }
+            ]
+        },
+    )
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query_system,
+        json={"tuples": []},
+    )
+
+    def match_change_project(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "user": "user:foo",
+                        "relation": "reader",
+                        "object": "project:bar",
+                    },
+                    {
+                        "user": "user:foo",
+                        "relation": "manager",
+                        "object": "project:baz",
+                    },
+                ]
+            }
+        } == request.json()
+
+    def match_change_domain(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "user": "user:foo",
+                        "relation": "reader",
+                        "object": "domain:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_change_project,
+    )
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_change_domain,
+    )
+    driver.delete_user_assignments("foo")
+
+
+def test_delete_group_assignments(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_query_project(request):
+        return {
+            "tuple_key": {"user": "group:foo", "object": "project:"}
+        } == request.json()
+
+    def match_query_domain(request):
+        return {
+            "tuple_key": {"user": "group:foo", "object": "domain:"}
+        } == request.json()
+
+    def match_query_system(request):
+        return {
+            "tuple_key": {"user": "group:foo", "object": "system:"}
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query_project,
+        json={
+            "tuples": [
+                {
+                    "key": {
+                        "user": "group:foo",
+                        "relation": "reader",
+                        "object": "project:bar",
+                    }
+                },
+                {
+                    "key": {
+                        "user": "group:foo",
+                        "relation": "manager",
+                        "object": "project:baz",
+                    }
+                },
+            ]
+        },
+    )
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query_domain,
+        json={
+            "tuples": [
+                {
+                    "key": {
+                        "user": "group:foo",
+                        "relation": "reader",
+                        "object": "domain:bar",
+                    }
+                }
+            ]
+        },
+    )
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/read",
+        additional_matcher=match_query_system,
+        json={"tuples": []},
+    )
+
+    def match_change_project(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "user": "group:foo",
+                        "relation": "reader",
+                        "object": "project:bar",
+                    },
+                    {
+                        "user": "group:foo",
+                        "relation": "manager",
+                        "object": "project:baz",
+                    },
+                ]
+            }
+        } == request.json()
+
+    def match_change_domain(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "user": "group:foo",
+                        "relation": "reader",
+                        "object": "domain:bar",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_change_project,
+    )
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_change_domain,
+    )
+    driver.delete_group_assignments("foo")
+
+
 def test_create_system_grant(monkeypatch, requests_mock, config):
     driver = plugin.OpenFGA()
 
