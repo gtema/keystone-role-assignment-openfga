@@ -12,12 +12,12 @@
 
 import typing as ty
 
-import oslo_config
-from oslo_log import log
 import keystone.conf
 from keystone import exception
 from keystone.assignment.backends import base
 from keystone.common import provider_api
+import oslo_config
+from oslo_log import log
 import requests
 
 from keystone_role_assignment_openfga import config
@@ -58,8 +58,41 @@ def convert_openfga_tuple_to_assignment(
     return assignment
 
 
+def convert_assignment_actor_to_fga_user(
+    user_id: ty.Optional[str] = None,
+    group_id: ty.Optional[str] = None,
+    allow_none: bool = False,
+) -> ty.Optional[str]:
+    if user_id:
+        return f"user:{user_id}"
+    elif group_id:
+        return f"group:{group_id}"
+    elif not allow_none:
+        raise RuntimeError("user_id or group_id must be specified")
+    return None
+
+
+def convert_assignment_target_to_fga_object(
+    project_id: ty.Optional[str] = None,
+    domain_id: ty.Optional[str] = None,
+    system_id: ty.Optional[str] = None,
+    allow_none: bool = False,
+) -> ty.Optional[str]:
+    if project_id:
+        return f"project:{project_id}"
+    elif domain_id:
+        return f"domain:{domain_id}"
+    elif system_id:
+        return f"system:{system_id}"
+    elif not allow_none:
+        raise RuntimeError(
+            "project_id, domain_id or system_id must be specified"
+        )
+    return None
+
+
 def convert_assignment_to_openfga_tuple(
-    role_name: str,
+    role_name: ty.Optional[str],
     user_id: ty.Optional[str] = None,
     group_id: ty.Optional[str] = None,
     project_id: ty.Optional[str] = None,
@@ -67,25 +100,19 @@ def convert_assignment_to_openfga_tuple(
     system_id: ty.Optional[str] = None,
 ) -> dict[str, str]:
     """Convert assignment to OpenFGA tuple"""
-    fga_tuple: dict[str, str] = {"relation": role_name}
-    if user_id:
-        fga_tuple["user"] = f"user:{user_id}"
-    elif group_id:
-        fga_tuple["user"] = f"group:{group_id}"
-    else:
-        raise RuntimeError(
-            "Cannot construct OpenFGA tuple without user_id or group_id"
-        )
-    if project_id:
-        fga_tuple["object"] = f"project:{project_id}"
-    elif domain_id:
-        fga_tuple["object"] = f"domain:{domain_id}"
-    elif system_id:
-        fga_tuple["object"] = f"system:{system_id}"
-    else:
-        raise RuntimeError(
-            "Cannot construct OpenFGA tuple without project_id or domain_id"
-        )
+    fga_tuple: dict[str, str] = {}
+    user = convert_assignment_actor_to_fga_user(
+        user_id=user_id, group_id=group_id
+    )
+    target = convert_assignment_target_to_fga_object(
+        project_id=project_id, domain_id=domain_id, system_id=system_id
+    )
+    if user:
+        fga_tuple["user"] = user
+    if target:
+        fga_tuple["object"] = target
+    if role_name:
+        fga_tuple["relation"] = role_name
     return fga_tuple
 
 
@@ -196,9 +223,15 @@ class OpenFGA(base.AssignmentDriverBase):
             )
             if response.status_code == 409:
                 raise keystone.exception.Conflict
-            if response.status_code != 200:
+            elif response.status_code == 400 and mode_key == "deletes":
+                raise exception.RoleAssignmentNotFound(
+                    role_id=tuples[0]["relation"],
+                    actor_id=tuples[0]["user"],
+                    target_id=tuples[0]["object"],
+                )
+            elif response.status_code != 200:
                 LOG.warning(
-                    "failed to check authorization (invalid http code: %s, body: %s",
+                    "failed to write tuple (invalid http code: %s, body: %s",
                     response.status_code,
                     response.text,
                 )
@@ -259,23 +292,12 @@ class OpenFGA(base.AssignmentDriverBase):
 
         return False
 
-    def openfga_check_actor_object_relations(
-        self, actor: str, target: str
-    ) -> list[dict[str, str]]:
-        """Perform `batch_check` OpenFGA request to fetch all relevant relations (role assignments)"""
+    def openfga_batch_check(
+        self, checks: list[dict]
+    ) -> dict[str, dict[str, str]]:
+        """Perform `batch_check` OpenFGA request"""
         assignments: list[dict[str, str]] = []
-        query: dict[str, ty.Any] = {"checks": []}
-        for role_name, role_id in self._get_roles_by_name().items():
-            query["checks"].append(
-                {
-                    "tuple_key": {
-                        "user": actor,
-                        "object": target,
-                        "relation": role_name,
-                    },
-                    "correlation_id": role_id,
-                }
-            )
+        query: dict[str, ty.Any] = {"checks": checks}
 
         try:
             LOG.debug(f"Batch Check OpenFGA authorizations with {query}")
@@ -289,21 +311,13 @@ class OpenFGA(base.AssignmentDriverBase):
                     response.status_code,
                     response.text,
                 )
-                return assignments
+                raise RuntimeError(
+                    f"OpenFGA returned unexpected response {response}"
+                )
             LOG.debug(f"OpenFGA response: {response.json()}")
-            check_results = response.json()["result"]
+            check_results = response.json().get("result", {})
 
-            for role_name, role_id in self._get_roles_by_name().items():
-                role_result = check_results.get(role_id, None)
-                if role_result:
-                    if role_result.get("allowed", False):
-                        assignment: dict = (
-                            convert_openfga_tuple_to_assignment_base(
-                                actor, target
-                            )
-                        )
-                        assignment["role_id"] = role_id
-                        assignments.append(assignment)
+            return check_results
 
         except (
             requests.exceptions.ConnectionError,
@@ -312,7 +326,39 @@ class OpenFGA(base.AssignmentDriverBase):
             LOG.warning("failed to check authorization in OpenFGA: %s", ex)
             raise
 
+    def openfga_check_actor_object_relations(
+        self, actor: str, target: str
+    ) -> list[dict[str, str]]:
+        """Perform `batch_check` OpenFGA request to fetch all relevant relations (role assignments)"""
+        assignments: list[dict[str, str]] = []
+        checks: list[dict[str, ty.Any]] = []
+        for role_name, role_id in self._get_roles_by_name().items():
+            checks.append(
+                {
+                    "tuple_key": {
+                        "user": actor,
+                        "object": target,
+                        "relation": role_name,
+                    },
+                    "correlation_id": role_id,
+                }
+            )
+
+        check_results = self.openfga_batch_check(checks)
+
+        for role_name, role_id in self._get_roles_by_name().items():
+            role_result = check_results.get(role_id, None)
+            if role_result:
+                if role_result.get("allowed", False):
+                    assignment: dict = (
+                        convert_openfga_tuple_to_assignment_base(actor, target)
+                    )
+                    assignment["role_id"] = role_id
+                    assignments.append(assignment)
+
         return assignments
+
+    # assignment/grant crud
 
     def add_role_to_user_and_project(self, user_id, project_id, role_id):
         """Add a role to a user within given project.
@@ -346,8 +392,6 @@ class OpenFGA(base.AssignmentDriverBase):
             domain_id=None,
         )
         self.openfga_remove_tuples([fga_tuple])
-
-    # assignment/grant crud
 
     def create_grant(
         self,
@@ -385,15 +429,20 @@ class OpenFGA(base.AssignmentDriverBase):
     ):
         """List role ids for assignments/grants."""
         fga_read_tuples_request: dict[str, str] = {}
-        if project_id:
-            fga_read_tuples_request["object"] = f"project:{project_id}"
-        elif domain_id:
-            fga_read_tuples_request["object"] = f"domain:{domain_id}"
 
-        if user_id:
-            fga_read_tuples_request["user"] = f"user:{user_id}"
-        elif group_id:
-            fga_read_tuples_request["user"] = f"group:{group_id}"
+        target = convert_assignment_target_to_fga_object(
+            project_id=project_id,
+            domain_id=domain_id,
+            system_id=system_id,
+            allow_none=True,
+        )
+        if target:
+            fga_read_tuples_request["object"] = target
+        actor = convert_assignment_actor_to_fga_user(
+            user_id=user_id, group_id=group_id, allow_none=True
+        )
+        if actor:
+            fga_read_tuples_request["user"] = actor
 
         assignments: list[dict] = self.openfga_read_assignments(
             fga_read_tuples_request
@@ -420,15 +469,19 @@ class OpenFGA(base.AssignmentDriverBase):
         target_id: ty.Optional[str] = project_id or domain_id
         actor_id: ty.Optional[str] = user_id or group_id
 
-        if project_id:
-            fga_check_request["object"] = f"project:{project_id}"
-        elif domain_id:
-            fga_check_request["object"] = f"domain:{domain_id}"
-
-        if user_id:
-            fga_check_request["user"] = f"user:{user_id}"
-        elif group_id:
-            fga_check_request["user"] = f"group:{group_id}"
+        target = convert_assignment_target_to_fga_object(
+            project_id=project_id,
+            domain_id=domain_id,
+            system_id=system_id,
+            allow_none=True,
+        )
+        if target:
+            fga_check_request["object"] = target
+        actor = convert_assignment_actor_to_fga_actor(
+            user_id=user_id, group_id=group_id, allow_none=True
+        )
+        if actor:
+            fga_check_request["user"] = actor
 
         relation = PROVIDERS.role_api.get_role(role_id)["name"]
         if relation:
@@ -698,10 +751,37 @@ class OpenFGA(base.AssignmentDriverBase):
         :param actor_id: the unique ID of the user or group
         :param target_id: the unique ID or string representing the target
         :param inherited: a boolean denoting if the assignment is inherited or
-                          not
+            not
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        fga_checks: list[dict[str, str]] = []
+        relation = self._get_roles_by_id()[role_id]
+        # Actor may be user
+        fga_checks.append(
+            {
+                "tuple_key": {
+                    "user": f"user:{actor_id}",
+                    "object": f"system:{target_id}",
+                    "relation": relation,
+                }
+            }
+        )
+        # actor may be group
+        fga_checks.append(
+            {
+                "tuple_key": {
+                    "user": f"group:{actor_id}",
+                    "object": f"system:{target_id}",
+                    "relation": relation,
+                }
+            }
+        )
+        for correlaition, check_result in self.openfga_batch_check(
+            fga_checks
+        ).items():
+            if check_result.get("allowed", False):
+                return True
+        return False
 
     def delete_system_grant(self, role_id, actor_id, target_id, inherited):
         """Remove a system assignment from a user or group.
@@ -710,7 +790,27 @@ class OpenFGA(base.AssignmentDriverBase):
         :param actor_id: the unique ID of the user or group
         :param target_id: the unique ID or string representing the target
         :param inherited: a boolean denoting if the assignment is inherited or
-                          not
+            not
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        relation = self._get_roles_by_id()[role_id]
+        # Try to delete relation for user and then group. If none found (both
+        # return 400 as not found) raise RoleAssignmentNotFound
+        for actor in [f"user:{actor_id}", f"group:{actor_id}"]:
+            try:
+                self.openfga_write(
+                    "delete",
+                    [
+                        {
+                            "user": actor,
+                            "relation": relation,
+                            "object": f"system:{target_id}",
+                        }
+                    ],
+                )
+                return
+            except exception.RoleAssignmentNotFound as ex:
+                pass
+        raise exception.RoleAssignmentNotFound(
+            role_id=role_id, actor_id=actor_id, target_id=target_id
+        )

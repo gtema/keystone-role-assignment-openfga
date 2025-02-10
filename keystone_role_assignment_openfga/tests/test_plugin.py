@@ -195,6 +195,67 @@ def test_list_role_assignments(monkeypatch, requests_mock, config):
     ]
 
 
+def test_list_role_assignments_actor_target(
+    monkeypatch, requests_mock, config
+):
+    driver = plugin.OpenFGA()
+
+    def match_batch_request(request):
+        return {
+            "checks": [
+                {
+                    "tuple_key": {
+                        "object": "project:bar",
+                        "relation": "reader",
+                        "user": "user:foo",
+                    },
+                    "correlation_id": "reader_role_id",
+                },
+                {
+                    "tuple_key": {
+                        "object": "project:bar",
+                        "relation": "manager",
+                        "user": "user:foo",
+                    },
+                    "correlation_id": "manager_role_id",
+                },
+            ]
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/batch-check",
+        additional_matcher=match_batch_request,
+        json={
+            "result": {
+                "reader_role_id": {"allowed": True},
+                "manager_role_id": {"allowed": False},
+            }
+        },
+    )
+
+    res = driver.list_role_assignments(user_id="foo", project_ids=["bar"])
+    assert res == [
+        {"project_id": "bar", "role_id": "reader_role_id", "user_id": "foo"}
+    ]
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/batch-check",
+        additional_matcher=match_batch_request,
+        json={
+            "result": {
+                "reader_role_id": {"allowed": True},
+                "manager_role_id": {"allowed": True},
+            }
+        },
+    )
+
+    res = driver.list_role_assignments(user_id="foo", project_ids=["bar"])
+    assert res == [
+        {"project_id": "bar", "role_id": "reader_role_id", "user_id": "foo"},
+        {"project_id": "bar", "role_id": "manager_role_id", "user_id": "foo"},
+    ]
+
+
 def test_list_role_assignments_bad_response(
     monkeypatch, requests_mock, config
 ):
@@ -754,3 +815,93 @@ def test_create_system_grant(monkeypatch, requests_mock, config):
     driver.create_system_grant(
         "reader_role_id", "foo", "bar", "GroupSystem", True
     )
+
+
+def test_check_system_grant(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_batch_request(request):
+        return {
+            "checks": [
+                {
+                    "tuple_key": {
+                        "object": "system:bar",
+                        "relation": "reader",
+                        "user": "user:foo",
+                    }
+                },
+                {
+                    "tuple_key": {
+                        "object": "system:bar",
+                        "relation": "reader",
+                        "user": "group:foo",
+                    }
+                },
+            ]
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/batch-check",
+        additional_matcher=match_batch_request,
+        json={"result": {"d1": {"allowed": False}, "d2": {"allowed": True}}},
+    )
+    assert True == driver.check_system_grant(
+        "reader_role_id", "foo", "bar", False
+    )
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/batch-check",
+        additional_matcher=match_batch_request,
+        json={"result": {"d1": {"allowed": False}, "d2": {"allowed": False}}},
+    )
+    assert False == driver.check_system_grant(
+        "reader_role_id", "foo", "bar", False
+    )
+
+
+def test_delete_system_grant(monkeypatch, requests_mock, config):
+    driver = plugin.OpenFGA()
+
+    def match_delete_user(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "object": "system:bar",
+                        "relation": "reader",
+                        "user": "user:foo",
+                    }
+                ]
+            }
+        } == request.json()
+
+    def match_delete_group(request):
+        return {
+            "deletes": {
+                "tuple_keys": [
+                    {
+                        "object": "system:bar",
+                        "relation": "reader",
+                        "user": "group:foo",
+                    }
+                ]
+            }
+        } == request.json()
+
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_delete_user,
+        status_code=400,
+    )
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write",
+        additional_matcher=match_delete_group,
+        status_code=200,
+    )
+    driver.delete_system_grant("reader_role_id", "foo", "bar", False)
+    # None found
+    requests_mock.post(
+        "http://localhost:8080/stores/foo/write", status_code=400
+    )
+    with pytest.raises(exception.RoleAssignmentNotFound):
+        driver.delete_system_grant("reader_role_id", "foo", "bar", False)
