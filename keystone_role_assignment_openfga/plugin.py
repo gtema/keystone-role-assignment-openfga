@@ -126,9 +126,11 @@ class OpenFGA(base.AssignmentDriverBase):
             self._openfga = requests.Session()
         return self._openfga
 
-    def openfga_read_tuples(self, query: dict) -> list[dict]:
-        """Perform `read tuples` OpenFGA request"""
-        assignments: list[dict[str, str]] = []
+    def openfga_read_tuples(self, query: dict) -> ty.Iterator[dict[str, str]]:
+        """Perform `read tuples` OpenFGA request
+
+        :returns: generator of tuples
+        """
         try:
             LOG.debug(f"Querying OpenFGA with {query}")
             request: dict = {"tuple_key": query} if query else {}
@@ -148,11 +150,7 @@ class OpenFGA(base.AssignmentDriverBase):
                 LOG.debug(f"OpenFGA response: {tuples}")
                 if isinstance(tuples, list):
                     for fga_tuple in tuples:
-                        assignment = convert_openfga_tuple_to_assignment(
-                            fga_tuple.get("key"), self._get_roles_by_name()
-                        )
-                        if assignment:
-                            assignments.append(assignment)
+                        yield fga_tuple["key"]
             except requests.exceptions.JSONDecodeError as ex:
                 LOG.exception("failed to process OpenFGA response: %s", ex)
 
@@ -165,10 +163,24 @@ class OpenFGA(base.AssignmentDriverBase):
             )
             raise
 
-        return assignments
+    def openfga_read_assignments(
+        self, query: dict
+    ) -> ty.Iterator[dict[str, str]]:
+        """Perform `read tuples` OpenFGA request and convert results to Keystone assignment triplets
+
+        :returns: generator of assignments
+        """
+        for fga_tuple in self.openfga_read_tuples(query):
+            assignment = convert_openfga_tuple_to_assignment(
+                fga_tuple, self._get_roles_by_name()
+            )
+            if assignment:
+                yield assignment
 
     def openfga_write(self, mode: str, tuples: list[dict[str, str]]):
         """Perform `write tuples` OpenFGA request"""
+        if not len(tuples) > 0:
+            return
         if mode == "add":
             mode_key = "writes"
         elif mode == "delete":
@@ -201,12 +213,16 @@ class OpenFGA(base.AssignmentDriverBase):
             )
             raise
 
-    def openfga_add_tuple(self, tuples: list[dict[str, str]]):
+    def openfga_add_tuples(self, tuples: list[dict[str, str]]):
         """Perform `write tuples` OpenFGA request"""
+        if not len(tuples) > 0:
+            return
         self.openfga_write("add", tuples)
 
-    def openfga_remove_tuple(self, tuples: list[dict[str, str]]):
+    def openfga_remove_tuples(self, tuples: list[dict[str, str]]):
         """Perform `delete tuples` OpenFGA request"""
+        if not len(tuples) > 0:
+            return
         self.openfga_write("delete", tuples)
 
     def openfga_check(self, query: dict) -> bool:
@@ -313,7 +329,7 @@ class OpenFGA(base.AssignmentDriverBase):
             project_id=project_id,
             domain_id=None,
         )
-        self.openfga_add_tuple([fga_tuple])
+        self.openfga_add_tuples([fga_tuple])
 
     def remove_role_from_user_and_project(self, user_id, project_id, role_id):
         """Remove a role from a user within given project.
@@ -329,7 +345,7 @@ class OpenFGA(base.AssignmentDriverBase):
             project_id=project_id,
             domain_id=None,
         )
-        self.openfga_remove_tuple([fga_tuple])
+        self.openfga_remove_tuples([fga_tuple])
 
     # assignment/grant crud
 
@@ -357,7 +373,7 @@ class OpenFGA(base.AssignmentDriverBase):
             project_id=project_id,
             domain_id=domain_id,
         )
-        self.openfga_add_tuple([fga_tuple])
+        self.openfga_add_tuples([fga_tuple])
 
     def list_grant_role_ids(
         self,
@@ -379,7 +395,7 @@ class OpenFGA(base.AssignmentDriverBase):
         elif group_id:
             fga_read_tuples_request["user"] = f"group:{group_id}"
 
-        assignments: list[dict] = self.openfga_read_tuples(
+        assignments: list[dict] = self.openfga_read_assignments(
             fga_read_tuples_request
         )
         return [x["role_id"] for x in assignments]
@@ -447,7 +463,7 @@ class OpenFGA(base.AssignmentDriverBase):
             project_id=project_id,
             domain_id=domain_id,
         )
-        self.openfga_remove_tuple([fga_tuple])
+        self.openfga_remove_tuples([fga_tuple])
 
     def list_role_assignments(
         self,
@@ -510,7 +526,7 @@ class OpenFGA(base.AssignmentDriverBase):
         else:
             assignments = [
                 assignment
-                for assignment in self.openfga_read_tuples(
+                for assignment in self.openfga_read_assignments(
                     fga_read_tuples_request
                 )
                 if not role_id or assignment[role_id] == role_id
@@ -524,10 +540,14 @@ class OpenFGA(base.AssignmentDriverBase):
             exist.
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        tuples = list(
+            self.openfga_read_tuples({"object": f"project:{project_id}"})
+        )
+        self.openfga_remove_tuples(tuples)
 
     def delete_role_assignments(self, role_id):
         """Delete all assignments for a role."""
+        # There is no API in OpenFGA to list all tuples with the specific relation
         raise exception.NotImplemented()  # pragma: no cover
 
     def delete_user_assignments(self, user_id):
@@ -536,7 +556,29 @@ class OpenFGA(base.AssignmentDriverBase):
         :raises keystone.exception.RoleNotFound: If the role doesn't exist.
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        # tuples for user access on all projects
+        project_tuples = list(
+            self.openfga_read_tuples(
+                {"user": f"user:{user_id}", "object": "project:"}
+            )
+        )
+        self.openfga_remove_tuples(project_tuples)
+
+        # tuples for user access on all domains
+        domain_tuples = list(
+            self.openfga_read_tuples(
+                {"user": f"user:{user_id}", "object": "domain:"}
+            )
+        )
+        self.openfga_remove_tuples(domain_tuples)
+
+        # tuples for user access on all systems
+        system_tuples = list(
+            self.openfga_read_tuples(
+                {"user": f"user:{user_id}", "object": "system:"}
+            )
+        )
+        self.openfga_remove_tuples(system_tuples)
 
     def delete_group_assignments(self, group_id):
         """Delete all assignments for a group.
@@ -544,11 +586,36 @@ class OpenFGA(base.AssignmentDriverBase):
         :raises keystone.exception.RoleNotFound: If the role doesn't exist.
 
         """
-        raise exception.NotImplemented()  # pragma: no cover
+        # tuples for group access on all projects
+        project_tuples = list(
+            self.openfga_read_tuples(
+                {"user": f"group:{group_id}", "object": "project:"}
+            )
+        )
+        self.openfga_remove_tuples(project_tuples)
+
+        # tuples for group access on all domains
+        domain_tuples = list(
+            self.openfga_read_tuples(
+                {"user": f"group:{group_id}", "object": "domain:"}
+            )
+        )
+        self.openfga_remove_tuples(domain_tuples)
+
+        # tuples for group access on all systems
+        system_tuples = list(
+            self.openfga_read_tuples(
+                {"user": f"group:{group_id}", "object": "system:"}
+            )
+        )
+        self.openfga_remove_tuples(system_tuples)
 
     def delete_domain_assignments(self, domain_id):
         """Delete all assignments for a domain."""
-        raise exception.NotImplemented()
+        tuples = list(
+            self.openfga_read_tuples({"object": f"domain:{domain_id}"})
+        )
+        self.openfga_remove_tuples(tuples)
 
     def create_system_grant(
         self, role_id, actor_id, target_id, assignment_type, inherited
@@ -574,7 +641,7 @@ class OpenFGA(base.AssignmentDriverBase):
         fga_tuple = convert_assignment_to_openfga_tuple(
             role_name, user_id=user_id, group_id=group_id, system_id=target_id
         )
-        self.openfga_add_tuple([fga_tuple])
+        self.openfga_add_tuples([fga_tuple])
 
     def list_system_grants(self, actor_id, target_id, assignment_type):
         """Return a list of all system assignments for a specific entity.
@@ -599,7 +666,7 @@ class OpenFGA(base.AssignmentDriverBase):
         if target_id:
             fga_read_tuples_request["object"] = f"system:{target_id}"
 
-        assignments: list[dict] = self.openfga_read_tuples(
+        assignments: list[dict] = self.openfga_read_assignments(
             fga_read_tuples_request
         )
         return assignments
@@ -619,7 +686,7 @@ class OpenFGA(base.AssignmentDriverBase):
         # NOTE(gtema) system scope currently supports a single target_id = 'system'
         fga_read_tuples_request["object"] = f"system:system"
 
-        assignments: list[dict] = self.openfga_read_tuples(
+        assignments: list[dict] = self.openfga_read_assignments(
             fga_read_tuples_request
         )
         return assignments
