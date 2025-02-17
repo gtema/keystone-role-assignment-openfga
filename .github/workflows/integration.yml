@@ -5,8 +5,11 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: Integration
+  integration:
+    strategy:
+      matrix:
+        backend: ["openfga", "openfga_sql_multiplex"]
+    name: Integration-${{ matrix.backend }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -82,8 +85,9 @@ jobs:
           echo "api_url = http://localhost:8080" >> etc/keystone.conf
           echo "store_id = ${store_id}" >> etc/keystone.conf
           echo "model_id = ${model_id}" >> etc/keystone.conf
+          echo "domains_using_sql_backend = ["default"]" >> etc/keystone.conf
           echo "[assignment]" >> etc/keystone.conf
-          echo "driver = openfga" >> etc/keystone.conf
+          echo "driver = ${{ matrix.backend }}" >> etc/keystone.conf
           echo "[database]" >> etc/keystone.conf
           echo "connection = postgresql://keystone:1234@127.0.0.1:5433/keystone" >> etc/keystone.conf
           echo "[fernet_receipts]" >> etc/keystone.conf
