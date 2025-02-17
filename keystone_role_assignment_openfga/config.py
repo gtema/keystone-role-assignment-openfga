@@ -11,6 +11,7 @@
 # under the License.
 
 from oslo_config import cfg
+from oslo_config import types
 
 openfga_group = cfg.OptGroup(
     name="fga", title="Options for OpenFGA role assignment backend"
@@ -21,6 +22,11 @@ openfga_opts = [
     cfg.StrOpt("store_id", help="OpenFGA store ID"),
     cfg.StrOpt("model_id", help="OpenFGA model ID"),
     cfg.BoolOpt("verify", default=True, help="Verify SSL certificate"),
+    cfg.ListOpt(
+        "domains_using_sql_backend",
+        item_type=types.String,
+        help="Use SQL backend for domains in a list",
+    ),
 ]
 
 
