@@ -46,7 +46,9 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
         self,
         user_id: ty.Optional[str] = None,
         group_id: ty.Optional[str] = None,
+        group_ids: ty.Optional[list[str]] = None,
         project_id: ty.Optional[str] = None,
+        project_ids: ty.Optional[list[str]] = None,
         domain_id: ty.Optional[str] = None,
     ) -> bool:
         """Determine whether SQL backend driver should be used"""
@@ -74,6 +76,26 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
                 use_sql = True
         elif domain_id:
             if domain_id in self.conf.fga.domains_using_sql_backend:
+                use_sql = True
+        elif group_ids:
+            LOG.warning(
+                "Selection of the roleassignment backend without single user_id is not deterministic"
+            )
+            group = PROVIDERS.identity_api.get_group(group_ids[0])
+            if (
+                group.get("domain_id")
+                in self.conf.fga.domains_using_sql_backend
+            ):
+                use_sql = True
+        elif project_ids:
+            LOG.warning(
+                "Selection of the roleassignment backend without single user_id is not deterministic"
+            )
+            project = PROVIDERS.resource_api.get_project(project_ids[0])
+            if (
+                project.get("domain_id")
+                in self.conf.fga.domains_using_sql_backend
+            ):
                 use_sql = True
         return use_sql
 
@@ -275,15 +297,15 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
         """
         if not self.should_use_sql_backend(
             user_id=user_id,
-            group_id=group_id,
+            group_ids=group_ids,
             domain_id=domain_id,
-            project_id=project_id,
+            project_ids=project_ids,
         ):
             return self.openfga.list_role_assignments(
                 role_id=role_id,
                 user_id=user_id,
-                group_id=group_id,
-                project_id=project_id,
+                group_ids=group_ids,
+                project_ids=project_ids,
                 domain_id=domain_id,
                 inherited_to_projects=inherited_to_projects,
             )
@@ -291,8 +313,8 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
             return self.sql.list_role_assignments(
                 role_id=role_id,
                 user_id=user_id,
-                group_id=group_id,
-                project_id=project_id,
+                group_ids=group_ids,
+                project_ids=project_ids,
                 domain_id=domain_id,
                 inherited_to_projects=inherited_to_projects,
             )
@@ -311,10 +333,7 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
 
     def delete_role_assignments(self, role_id):
         """Delete all assignments for a role."""
-        if not self.should_use_sql_backend(project_id=project_id):
-            raise exception.NotImplemented()  # pragma: no cover
-        else:
-            return self.sql.list_role_assignments(role_id)
+        raise exception.NotImplemented()  # pragma: no cover
 
     def delete_user_assignments(self, user_id):
         """Delete all assignments for a user.
