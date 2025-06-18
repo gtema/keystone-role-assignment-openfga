@@ -30,16 +30,26 @@ PROVIDERS = provider_api.ProviderAPIs
 def convert_openfga_tuple_to_assignment_base(actor: str, target: str):
     """Convert actor and target to the assignment dict."""
     assignment: dict[str, str] = {}
+    type_prefix: str = ""
     if actor.startswith("user"):
-        assignment["user_id"] = actor[5:]
+        assignment["actor_id"] = actor[5:]
+        type_prefix = "User"
     elif actor.startswith("group"):
-        assignment["group_id"] = actor[6:]
+        assignment["actor_id"] = actor[6:]
+        type_prefix = "Group"
+    else:
+        raise RuntimeError(f"Actor {actor} is not supported")
     if target.startswith("project"):
-        assignment["project_id"] = target[8:]
+        assignment["target_id"] = target[8:]
+        assignment["type"] = f"{type_prefix}Project"
     elif target.startswith("domain"):
-        assignment["domain_id"] = target[7:]
+        assignment["target_id"] = target[7:]
+        assignment["type"] = f"{type_prefix}Domain"
     elif target.startswith("system"):
-        assignment["system_id"] = target[7:]
+        assignment["target_id"] = target[7:]
+        assignment["type"] = f"{type_prefix}System"
+    else:
+        raise RuntimeError(f"Target {target} is not supported")
     return assignment
 
 
@@ -54,7 +64,31 @@ def convert_openfga_tuple_to_assignment(
     if fga_relation in roles_by_name:
         assignment["role_id"] = roles_by_name[fga_relation]
     else:
+        LOG.warning(f"Cannot identify the role for: {fga_relation}")
         return None
+    return assignment
+
+
+def denormalize_assignment(assignment: dict[str, str]) -> dict[str, str]:
+    """Denormalize assignment like Keystone does in the list_assignments"""
+    if assignment["type"] == "UserProject":
+        assignment["user_id"] = assignment["actor_id"]
+        assignment["project_id"] = assignment["target_id"]
+    elif assignment["type"] == "GroupProject":
+        assignment["group_id"] = assignment["actor_id"]
+        assignment["project_id"] = assignment["target_id"]
+    elif assignment["type"] == "UserDomain":
+        assignment["user_id"] = assignment["actor_id"]
+        assignment["domain_id"] = assignment["target_id"]
+    elif assignment["type"] == "GroupDomain":
+        assignment["group_id"] = assignment["actor_id"]
+        assignment["domain_id"] = assignment["target_id"]
+    elif assignment["type"] == "UserSystem":
+        assignment["user_id"] = assignment["actor_id"]
+        assignment["system_id"] = assignment["target_id"]
+    elif assignment["type"] == "GroupSystem":
+        assignment["group_id"] = assignment["actor_id"]
+        assignment["system_id"] = assignment["target_id"]
     return assignment
 
 
@@ -159,7 +193,6 @@ class OpenFGA(base.AssignmentDriverBase):
         :returns: generator of tuples
         """
         try:
-            LOG.debug(f"Querying OpenFGA with {query}")
             request: dict = {"tuple_key": query} if query else {}
             response = self.fga_session.post(
                 f"{self.conf.fga.api_url}/stores/{self.conf.fga.store_id}/read",
@@ -175,7 +208,6 @@ class OpenFGA(base.AssignmentDriverBase):
                 return
             try:
                 tuples = response.json().get("tuples", None)
-                LOG.debug(f"OpenFGA response: {tuples}")
                 if isinstance(tuples, list):
                     for fga_tuple in tuples:
                         yield fga_tuple["key"]
@@ -198,12 +230,70 @@ class OpenFGA(base.AssignmentDriverBase):
 
         :returns: generator of assignments
         """
-        for fga_tuple in self.openfga_read_tuples(query):
-            assignment = convert_openfga_tuple_to_assignment(
-                fga_tuple, self._get_roles_by_name()
+        user = query.get("user")
+        relation = query.get("relation")
+        obj = query.get("object")
+        openfga_tuples: list[dict] = []
+        # Certain queries are not supported in OpenFGA:
+        # - When only user is known we must specify the object
+        #   - when object is unknown sequentially query glob for projects and
+        #     domains
+        # - When only user and relalition is known: join glob
+        #   queries for projects and domains
+        if user and not obj and not relation:
+            # user only - join glob queries for all projects and all domains
+            openfga_tuples = list(
+                self.openfga_read_tuples({"user": user, "object": "project:"})
             )
-            if assignment:
-                yield assignment
+            openfga_tuples.extend(
+                list(
+                    self.openfga_read_tuples({
+                        "user": user,
+                        "object": "domain:",
+                    })
+                )
+            )
+        elif user and not obj and relation:
+            # user and relation - join glob queries for all projects and all
+            # domains
+            openfga_tuples = list(
+                self.openfga_read_tuples({
+                    "user": user,
+                    "relation": relation,
+                    "object": "project:",
+                })
+            )
+            openfga_tuples.extend(
+                list(
+                    self.openfga_read_tuples({
+                        "user": user,
+                        "relation": relation,
+                        "object": "domain:",
+                    })
+                )
+            )
+        elif user and obj and not relation:
+            openfga_tuples = list(self.openfga_read_tuples(query))
+        elif not user and obj and relation:
+            openfga_tuples = list(self.openfga_read_tuples(query))
+        elif not user and obj and not relation:
+            openfga_tuples = list(self.openfga_read_tuples(query))
+        elif not user and not obj and relation:
+            raise NotImplementedError(
+                "Listing tuples knowing only the relation (list assignments "
+                "by role) is not possible in OpenFGA"
+            )
+        else:
+            openfga_tuples = list(self.openfga_read_tuples(query))
+        role_names = self._get_roles_by_name().keys()
+        for fga_tuple in openfga_tuples:
+            # Filter out relations that are not roles
+            if fga_tuple["relation"] in role_names:
+                assignment = convert_openfga_tuple_to_assignment(
+                    fga_tuple, self._get_roles_by_name()
+                )
+                if assignment:
+                    yield assignment
 
     def openfga_write(self, mode: str, tuples: list[dict[str, str]]):
         """Perform `write tuples` OpenFGA request"""
@@ -216,7 +306,6 @@ class OpenFGA(base.AssignmentDriverBase):
         else:
             raise RuntimeError(f"Mode {mode} is not supported")
         try:
-            LOG.debug(f"Writing OpenFGA tuples {tuples}")
             request: dict[str, ty.Any] = {mode_key: {"tuple_keys": tuples}}
             response = self.fga_session.post(
                 f"{self.conf.fga.api_url}/stores/{self.conf.fga.store_id}/write",
@@ -262,25 +351,25 @@ class OpenFGA(base.AssignmentDriverBase):
     def openfga_check(self, query: dict) -> bool:
         """Perform `check` OpenFGA request"""
         try:
-            LOG.debug(f"Check OpenFGA authorizations with {query}")
             response = self.fga_session.post(
                 f"{self.conf.fga.api_url}/stores/{self.conf.fga.store_id}/check",
                 json={"tuple_key": query},
             )
             if response.status_code != 200:
                 LOG.warning(
-                    "failed to check authorization (invalid http code: %s, body: %s",
+                    "failed to check authorization (invalid http code: %s,"
+                    " body: %s",
                     response.status_code,
                     response.text,
                 )
                 return False
-            LOG.debug(f"OpenFGA response: {response.json()}")
             allowed = response.json().get("allowed", None)
             if allowed is not None:
                 return allowed
             else:
                 LOG.warning(
-                    "Allowed flag was not present in the OpenFGA check response"
+                    "Allowed flag was not present in the OpenFGA check"
+                    " response"
                 )
 
         except (
@@ -299,21 +388,20 @@ class OpenFGA(base.AssignmentDriverBase):
         query: dict[str, ty.Any] = {"checks": checks}
 
         try:
-            LOG.debug(f"Batch Check OpenFGA authorizations with {query}")
             response = self.fga_session.post(
                 f"{self.conf.fga.api_url}/stores/{self.conf.fga.store_id}/batch-check",
                 json=query,
             )
             if response.status_code != 200:
                 LOG.warning(
-                    "failed to batch check authorization (invalid http code: %s, body: %s",
+                    "failed to batch check authorization (invalid http code:"
+                    " %s, body: %s",
                     response.status_code,
                     response.text,
                 )
                 raise RuntimeError(
                     f"OpenFGA returned unexpected response {response}"
                 )
-            LOG.debug(f"OpenFGA response: {response.json()}")
             check_results = response.json().get("result", {})
 
             return check_results
@@ -523,7 +611,7 @@ class OpenFGA(base.AssignmentDriverBase):
         domain_id=None,
         project_ids=None,
         inherited_to_projects=None,
-    ):
+    ) -> list[dict[str, str]]:
         """Return a list of role assignments for actors on targets.
 
         Available parameters represent values in which the returned role
@@ -536,7 +624,8 @@ class OpenFGA(base.AssignmentDriverBase):
         if project_ids:
             if len(project_ids) > 1:
                 raise exception.NotImplemented(
-                    "Listing role assignments for multiple project_ids is not implemented"
+                    "Listing role assignments for multiple project_ids is not"
+                    " implemented"
                 )
             target = f"project:{project_ids[0]}"
         elif domain_id:
@@ -550,7 +639,8 @@ class OpenFGA(base.AssignmentDriverBase):
         elif group_ids:
             if len(group_ids) > 1:
                 raise exception.NotImplemented(
-                    "Listing role assignments for multiple group_ids is not implemented"
+                    "Listing role assignments for multiple group_ids is not"
+                    " implemented"
                 )  # pragma: no cover
             fga_read_tuples_request["user"] = f"group:{group_ids[0]}"
             actor = f"group:{group_ids[0]}"
@@ -564,24 +654,33 @@ class OpenFGA(base.AssignmentDriverBase):
             )["name"]
 
         assignments: list[dict[str, str]] = []
-        if user_id and target and not role_id:
+        if actor and target and not role_id:
             # User authorization attempt has a combination of user_id and
             # specific target without role. In this case wee want to return
             # list of effective assignments.
             assignments = self.openfga_check_actor_object_relations(
                 actor, target
             )
-            # TODO: keystone caches user roles so technically we may need to
-            # invalidate the cache immediately.
+
+        # TODO: keystone caches user roles so technically we may need to
+        # invalidate the cache immediately.
         else:
-            assignments = [
-                assignment
-                for assignment in self.openfga_read_assignments(
-                    fga_read_tuples_request
+            assignments = list(
+                filter(
+                    lambda assignment: not role_id
+                    or assignment[role_id] == role_id,
+                    self.openfga_read_assignments(fga_read_tuples_request),
                 )
-                if not role_id or assignment[role_id] == role_id
-            ]
-        return assignments
+            )
+        return [
+            denormalize_assignment(assignment)
+            for assignment in filter(
+                # This function is not supposed to return any of the System
+                # related grants)
+                lambda role: role["type"] not in ["UserSystem", "GroupSystem"],
+                assignments,
+            )
+        ]
 
     def delete_project_assignments(self, project_id):
         """Delete all assignments for a project.
@@ -699,7 +798,9 @@ class OpenFGA(base.AssignmentDriverBase):
         )
         self.openfga_add_tuples([fga_tuple])
 
-    def list_system_grants(self, actor_id, target_id, assignment_type):
+    def list_system_grants(
+        self, actor_id, target_id, assignment_type
+    ) -> list[dict]:
         """Return a list of all system assignments for a specific entity.
 
         :param actor_id: the unique ID of the actor
@@ -707,11 +808,6 @@ class OpenFGA(base.AssignmentDriverBase):
         :param assignment_type: the type of assignment to return
 
         """
-        LOG.debug(
-            f"Listing system grants of {assignment_type} for {actor_id} "
-            f"on {target_id}"
-        )
-
         fga_read_tuples_request: dict[str, str] = {}
         if actor_id:
             if assignment_type == "UserSystem":
@@ -722,19 +818,17 @@ class OpenFGA(base.AssignmentDriverBase):
         if target_id:
             fga_read_tuples_request["object"] = f"system:{target_id}"
 
-        assignments: list[dict] = self.openfga_read_assignments(
-            fga_read_tuples_request
+        assignments: list[dict] = list(
+            self.openfga_read_assignments(fga_read_tuples_request)
         )
         return assignments
 
-    def list_system_grants_by_role(self, role_id):
+    def list_system_grants_by_role(self, role_id) -> list[dict]:
         """Return a list of system assignments associated to a role.
 
         :param role_id: the unique ID of the role to grant to the user
 
         """
-        LOG.debug(f"Listing system grants by for role {role_id}")
-
         fga_read_tuples_request: dict[str, str] = {}
         fga_read_tuples_request["relation"] = self._get_roles_by_id()[role_id]
 
@@ -742,8 +836,8 @@ class OpenFGA(base.AssignmentDriverBase):
         # target_id = 'system'
         fga_read_tuples_request["object"] = "system:system"
 
-        assignments: list[dict] = self.openfga_read_assignments(
-            fga_read_tuples_request
+        assignments: list[dict] = list(
+            self.openfga_read_assignments(fga_read_tuples_request)
         )
         return assignments
 

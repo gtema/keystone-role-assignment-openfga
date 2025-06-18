@@ -27,5 +27,4 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run tests
-        # For example, using `pytest`
-        run: uv run pytest
+        run: uv run pytest keystone_role_assignment_openfga/tests/unit

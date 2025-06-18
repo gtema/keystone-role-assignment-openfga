@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   pull_request:
 
+env:
+  OS_KEYSTONE_CONFIG_DIR: ${{ github.workspace }}/etc
+
 jobs:
   integration:
     strategy:
@@ -48,7 +51,7 @@ jobs:
 
       - name: Start OpenFGA server in background
         shell: bash
-        run: openfga run &
+        run: openfga run > fga.log 2>&1 &
 
       - name: Install OpenFGA cli
         uses: jaxxstorm/action-install-gh-release@v2.1.0
@@ -82,29 +85,64 @@ jobs:
           model_id: ${{ steps.store.outputs.model_id }}
         run: |
           cat <<EOF > etc/keystone.conf
+          [DEFAULT]
+          debug = true
           [fga]
           api_url = http://localhost:8080
           store_id = ${store_id}
           model_id = ${model_id}
           domains_using_sql_backend = ["default"]
+
           [assignment]
           driver = ${{ matrix.backend }}
+
           [database]
           connection = postgresql://keystone:1234@127.0.0.1:5433/keystone
+
           [fernet_receipts]
           key_repository = $(pwd)/etc/fernet
+
           [fernet_tokens]
           key_repository = $(pwd)/etc/fernet
           EOF
           cat etc/keystone.conf
+
+      - name: Prepare clouds.yaml
+        run: |
+          mkdir -p ~/.config/openstack
+          cat <<EOF > ~/.config/openstack/clouds.yaml
+          clouds:
+            admin:
+              auth:
+                auth_url: http://localhost:5001
+                username: admin
+                password: password
+                project_name: admin
+                user_domain_id: default
+                project_domain_id: default
+              interface: public
+          EOF
 
       - name: Init keystone
         run: |
           mkdir -p etc/fernet
           keystone-manage --config-file etc/keystone.conf db_sync
           keystone-manage --config-file etc/keystone.conf fernet_setup
-          keystone-manage --config-file etc/keystone.conf bootstrap --bootstrap-password password
+          keystone-manage --config-file etc/keystone.conf bootstrap --bootstrap-password password --bootstrap-public-url http://localhost:5001
 
       - name: Start python keystone
         run: uwsgi --module "keystone.server.wsgi:initialize_public_application()" --http-socket :5001 -b 65535 --http-keepalive --so-keepalive --logformat "Request %(uri):%(method) returned %(status) in %(msecs)ms" > python.log 2>&1 &
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Run the tests
+        run: uv run pytest keystone_role_assignment_openfga/tests/functional
+
+      - name: Dump python keystone log
+        if: failure()
+        run: cat python.log
+
+      - name: Dump fga log
+        if: failure()
+        run: cat fga.log
