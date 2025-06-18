@@ -81,19 +81,21 @@ jobs:
           store_id: ${{ steps.store.outputs.store_id }}
           model_id: ${{ steps.store.outputs.model_id }}
         run: |
-          echo "[fga]" > etc/keystone.conf
-          echo "api_url = http://localhost:8080" >> etc/keystone.conf
-          echo "store_id = ${store_id}" >> etc/keystone.conf
-          echo "model_id = ${model_id}" >> etc/keystone.conf
-          echo "domains_using_sql_backend = ["default"]" >> etc/keystone.conf
-          echo "[assignment]" >> etc/keystone.conf
-          echo "driver = ${{ matrix.backend }}" >> etc/keystone.conf
-          echo "[database]" >> etc/keystone.conf
-          echo "connection = postgresql://keystone:1234@127.0.0.1:5433/keystone" >> etc/keystone.conf
-          echo "[fernet_receipts]" >> etc/keystone.conf
-          echo "key_repository = $(pwd)/etc/fernet" >> etc/keystone.conf
-          echo "[fernet_tokens]" >> etc/keystone.conf
-          echo "key_repository = $(pwd)/etc/fernet" >> etc/keystone.conf
+          cat <<EOF > etc/keystone.conf
+          [fga]
+          api_url = http://localhost:8080
+          store_id = ${store_id}
+          model_id = ${model_id}
+          domains_using_sql_backend = ["default"]
+          [assignment]
+          driver = ${{ matrix.backend }}
+          [database]
+          connection = postgresql://keystone:1234@127.0.0.1:5433/keystone
+          [fernet_receipts]
+          key_repository = $(pwd)/etc/fernet
+          [fernet_tokens]
+          key_repository = $(pwd)/etc/fernet
+          EOF
           cat etc/keystone.conf
 
       - name: Init keystone
@@ -102,3 +104,7 @@ jobs:
           keystone-manage --config-file etc/keystone.conf db_sync
           keystone-manage --config-file etc/keystone.conf fernet_setup
           keystone-manage --config-file etc/keystone.conf bootstrap --bootstrap-password password
+
+      - name: Start python keystone
+        run: uwsgi --module "keystone.server.wsgi:initialize_public_application()" --http-socket :5001 -b 65535 --http-keepalive --so-keepalive --logformat "Request %(uri):%(method) returned %(status) in %(msecs)ms" > python.log 2>&1 &
+

@@ -167,7 +167,8 @@ class OpenFGA(base.AssignmentDriverBase):
             )
             if response.status_code != 200:
                 LOG.warning(
-                    "failed to check authorization (invalid http code: %s, body: %s",
+                    "failed to check authorization "
+                    "(invalid http code: %s, body: %s)",
                     response.status_code,
                     response.text,
                 )
@@ -260,7 +261,6 @@ class OpenFGA(base.AssignmentDriverBase):
 
     def openfga_check(self, query: dict) -> bool:
         """Perform `check` OpenFGA request"""
-        assignments: list[dict[str, str]] = []
         try:
             LOG.debug(f"Check OpenFGA authorizations with {query}")
             response = self.fga_session.post(
@@ -296,7 +296,6 @@ class OpenFGA(base.AssignmentDriverBase):
         self, checks: list[dict]
     ) -> dict[str, dict[str, str]]:
         """Perform `batch_check` OpenFGA request"""
-        assignments: list[dict[str, str]] = []
         query: dict[str, ty.Any] = {"checks": checks}
 
         try:
@@ -431,7 +430,7 @@ class OpenFGA(base.AssignmentDriverBase):
         target = convert_assignment_target_to_fga_object(
             project_id=project_id,
             domain_id=domain_id,
-            system_id=system_id,
+            system_id=None,
             allow_none=True,
         )
         if target:
@@ -470,12 +469,12 @@ class OpenFGA(base.AssignmentDriverBase):
         target = convert_assignment_target_to_fga_object(
             project_id=project_id,
             domain_id=domain_id,
-            system_id=system_id,
+            system_id=None,
             allow_none=True,
         )
         if target:
             fga_check_request["object"] = target
-        actor = convert_assignment_actor_to_fga_actor(
+        actor = convert_assignment_actor_to_fga_user(
             user_id=user_id, group_id=group_id, allow_none=True
         )
         if actor:
@@ -709,11 +708,11 @@ class OpenFGA(base.AssignmentDriverBase):
 
         """
         LOG.debug(
-            f"Listing system grants of {assignment_type} for {actor_id} on {target_id}"
+            f"Listing system grants of {assignment_type} for {actor_id} "
+            f"on {target_id}"
         )
 
         fga_read_tuples_request: dict[str, str] = {}
-        targets = None
         if actor_id:
             if assignment_type == "UserSystem":
                 fga_read_tuples_request["user"] = f"user:{actor_id[0]}"
@@ -737,11 +736,11 @@ class OpenFGA(base.AssignmentDriverBase):
         LOG.debug(f"Listing system grants by for role {role_id}")
 
         fga_read_tuples_request: dict[str, str] = {}
-        targets = None
         fga_read_tuples_request["relation"] = self._get_roles_by_id()[role_id]
 
-        # NOTE(gtema) system scope currently supports a single target_id = 'system'
-        fga_read_tuples_request["object"] = f"system:system"
+        # NOTE(gtema) system scope currently supports a single
+        # target_id = 'system'
+        fga_read_tuples_request["object"] = "system:system"
 
         assignments: list[dict] = self.openfga_read_assignments(
             fga_read_tuples_request
@@ -809,7 +808,7 @@ class OpenFGA(base.AssignmentDriverBase):
                     ],
                 )
                 return
-            except exception.RoleAssignmentNotFound as ex:
+            except exception.RoleAssignmentNotFound:
                 pass
         raise exception.RoleAssignmentNotFound(
             role_id=role_id, actor_id=actor_id, target_id=target_id
