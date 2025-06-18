@@ -13,12 +13,12 @@
 import typing as ty
 
 import keystone.conf
+import oslo_config
+import requests
 from keystone import exception
 from keystone.assignment.backends import base
 from keystone.common import provider_api
-import oslo_config
 from oslo_log import log
-import requests
 
 from keystone_role_assignment_openfga import config
 
@@ -171,7 +171,7 @@ class OpenFGA(base.AssignmentDriverBase):
                     response.status_code,
                     response.text,
                 )
-                return []
+                return
             try:
                 tuples = response.json().get("tuples", None)
                 LOG.debug(f"OpenFGA response: {tuples}")
@@ -333,16 +333,14 @@ class OpenFGA(base.AssignmentDriverBase):
         assignments: list[dict[str, str]] = []
         checks: list[dict[str, ty.Any]] = []
         for role_name, role_id in self._get_roles_by_name().items():
-            checks.append(
-                {
-                    "tuple_key": {
-                        "user": actor,
-                        "object": target,
-                        "relation": role_name,
-                    },
-                    "correlation_id": role_id,
-                }
-            )
+            checks.append({
+                "tuple_key": {
+                    "user": actor,
+                    "object": target,
+                    "relation": role_name,
+                },
+                "correlation_id": role_id,
+            })
 
         check_results = self.openfga_batch_check(checks)
 
@@ -611,25 +609,28 @@ class OpenFGA(base.AssignmentDriverBase):
         """
         # tuples for user access on all projects
         project_tuples = list(
-            self.openfga_read_tuples(
-                {"user": f"user:{user_id}", "object": "project:"}
-            )
+            self.openfga_read_tuples({
+                "user": f"user:{user_id}",
+                "object": "project:",
+            })
         )
         self.openfga_remove_tuples(project_tuples)
 
         # tuples for user access on all domains
         domain_tuples = list(
-            self.openfga_read_tuples(
-                {"user": f"user:{user_id}", "object": "domain:"}
-            )
+            self.openfga_read_tuples({
+                "user": f"user:{user_id}",
+                "object": "domain:",
+            })
         )
         self.openfga_remove_tuples(domain_tuples)
 
         # tuples for user access on all systems
         system_tuples = list(
-            self.openfga_read_tuples(
-                {"user": f"user:{user_id}", "object": "system:"}
-            )
+            self.openfga_read_tuples({
+                "user": f"user:{user_id}",
+                "object": "system:",
+            })
         )
         self.openfga_remove_tuples(system_tuples)
 
@@ -641,25 +642,28 @@ class OpenFGA(base.AssignmentDriverBase):
         """
         # tuples for group access on all projects
         project_tuples = list(
-            self.openfga_read_tuples(
-                {"user": f"group:{group_id}", "object": "project:"}
-            )
+            self.openfga_read_tuples({
+                "user": f"group:{group_id}",
+                "object": "project:",
+            })
         )
         self.openfga_remove_tuples(project_tuples)
 
         # tuples for group access on all domains
         domain_tuples = list(
-            self.openfga_read_tuples(
-                {"user": f"group:{group_id}", "object": "domain:"}
-            )
+            self.openfga_read_tuples({
+                "user": f"group:{group_id}",
+                "object": "domain:",
+            })
         )
         self.openfga_remove_tuples(domain_tuples)
 
         # tuples for group access on all systems
         system_tuples = list(
-            self.openfga_read_tuples(
-                {"user": f"group:{group_id}", "object": "system:"}
-            )
+            self.openfga_read_tuples({
+                "user": f"group:{group_id}",
+                "object": "system:",
+            })
         )
         self.openfga_remove_tuples(system_tuples)
 
@@ -757,25 +761,21 @@ class OpenFGA(base.AssignmentDriverBase):
         fga_checks: list[dict[str, str]] = []
         relation = self._get_roles_by_id()[role_id]
         # Actor may be user
-        fga_checks.append(
-            {
-                "tuple_key": {
-                    "user": f"user:{actor_id}",
-                    "object": f"system:{target_id}",
-                    "relation": relation,
-                }
+        fga_checks.append({
+            "tuple_key": {
+                "user": f"user:{actor_id}",
+                "object": f"system:{target_id}",
+                "relation": relation,
             }
-        )
+        })
         # actor may be group
-        fga_checks.append(
-            {
-                "tuple_key": {
-                    "user": f"group:{actor_id}",
-                    "object": f"system:{target_id}",
-                    "relation": relation,
-                }
+        fga_checks.append({
+            "tuple_key": {
+                "user": f"group:{actor_id}",
+                "object": f"system:{target_id}",
+                "relation": relation,
             }
-        )
+        })
         for correlaition, check_result in self.openfga_batch_check(
             fga_checks
         ).items():

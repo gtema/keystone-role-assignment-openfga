@@ -12,15 +12,14 @@
 
 
 import pytest
-
-from keystone_role_assignment_openfga import plugin
-from keystone_role_assignment_openfga import config as plugin_config
-from keystone.common import provider_api
-from keystone import exception
-
-from requests import HTTPError
 import requests_mock
+from keystone import exception
+from keystone.common import provider_api
 from oslo_config import cfg
+from requests import HTTPError
+
+from keystone_role_assignment_openfga import config as plugin_config
+from keystone_role_assignment_openfga import plugin
 
 PROVIDERS = provider_api.ProviderAPIs
 ROLES = [

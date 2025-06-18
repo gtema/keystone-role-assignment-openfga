@@ -59,7 +59,9 @@ select = ["C4", "UP"]
 [tool.ruff.format]
 quote-style = "double"
 docstring-code-format = true
+docstring-code-line-length = 40
 skip-magic-trailing-comma = true
+preview = true
 
 [tool.uv]
 

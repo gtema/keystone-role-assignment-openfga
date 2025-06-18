@@ -10,8 +10,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-from oslo_config import cfg
-from oslo_config import types
+from oslo_config import cfg, types
 
 openfga_group = cfg.OptGroup(
     name="fga", title="Options for OpenFGA role assignment backend"

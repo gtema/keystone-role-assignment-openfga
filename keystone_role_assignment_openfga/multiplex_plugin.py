@@ -13,11 +13,10 @@
 import typing as ty
 
 import keystone.conf
-from keystone import exception
-from keystone.assignment.backends import base
-from keystone.assignment.backends import sql
-from keystone.common import provider_api
 import oslo_config
+from keystone import exception
+from keystone.assignment.backends import base, sql
+from keystone.common import provider_api
 from oslo_log import log
 
 from keystone_role_assignment_openfga import config
