@@ -55,6 +55,7 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
         use_sql = False
         if user_id:
             user = PROVIDERS.identity_api.get_user(user_id)
+            LOG.debug(f"User {user_id}: {user}")
             if (
                 user.get("domain_id")
                 in self.conf.fga.domains_using_sql_backend
@@ -79,7 +80,8 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
                 use_sql = True
         elif group_ids:
             LOG.warning(
-                "Selection of the roleassignment backend without single user_id is not deterministic"
+                "Selection of the roleassignment backend without single"
+                " user_id is not deterministic"
             )
             group = PROVIDERS.identity_api.get_group(group_ids[0])
             if (
@@ -89,7 +91,8 @@ class OpenFGASqlMultiplex(base.AssignmentDriverBase):
                 use_sql = True
         elif project_ids:
             LOG.warning(
-                "Selection of the roleassignment backend without single user_id is not deterministic"
+                "Selection of the roleassignment backend without single"
+                " user_id is not deterministic"
             )
             project = PROVIDERS.resource_api.get_project(project_ids[0])
             if (

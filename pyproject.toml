@@ -26,15 +26,18 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
 ]
 
 [build-system]
 requires = ["pbr>=6.0.0", "setuptools>=64.0.0"]
 build-backend = "pbr.build"
 
-[project.optional-dependencies]
-test = ["pytest", "requests-mock"]
+[dependency-groups]
+dev = [
+  "pytest >=8.1.1,<9",
+  "requests-mock",
+  "openstacksdk >=4.0,<5"
+]
 
 [project.entry-points."keystone.assignment"]
 openfga = "keystone_role_assignment_openfga.plugin:OpenFGA"

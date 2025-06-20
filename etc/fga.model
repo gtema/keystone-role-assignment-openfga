@@ -2,6 +2,11 @@ model
   schema 1.1
 
 type domain
+  relations
+    define admin: [user, group#member]
+    define manager: [user, group#member] or admin
+    define member: [user, group#member] or admin or manager
+    define reader: [user, group#member] or admin or manager or member
 
 type user
   relations
